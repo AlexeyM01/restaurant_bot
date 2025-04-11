@@ -7,6 +7,7 @@ from aiogram_calendar import SimpleCalendarCallback, SimpleCalendar, get_user_lo
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from dateutil.relativedelta import relativedelta
+from sqlalchemy import select
 
 from src.database.database import get_db
 from src.database.models import Booking
@@ -29,6 +30,21 @@ time_keyboard = ReplyKeyboardMarkup(
     keyboard=time_buttons,
     resize_keyboard=True
 )
+
+
+async def cmd_get(message: Message):
+    telegram_user_id = message.from_user.id
+    async for db in get_db():
+        booking_query = select(Booking).where(Booking.telegram_user_id == telegram_user_id)
+        result = await db.execute(booking_query)
+        bookings = result.scalars().all()
+        if bookings:
+            booking_messages = "\n".join(
+                [f"Бронирование: на имя: {booking.name}, дата: {booking.date}, "
+                 f"гостей = {booking.guests}" for booking in bookings])
+            await message.reply(booking_messages)
+        else:
+            await message.reply("У вас нет активных бронирований.")
 
 
 async def cmd_start(message: Message, state: FSMContext):
@@ -105,3 +121,5 @@ async def db_add_booking(name: str, date: datetime, guests: int, telegram_user_i
         db.add(new_booking)
         await db.commit()
         await db.refresh(new_booking)
+
+
