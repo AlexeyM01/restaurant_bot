@@ -1,17 +1,17 @@
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-
-Base = declarative_base()
+"""
+src/database/models.py
+"""
+from sqlalchemy import Column, Integer, String, DateTime
+from src.database.database import Base
 
 
 class Booking(Base):
     __tablename__ = 'bookings'
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id = Column(Integer)
     name = Column(String)
     date = Column(DateTime)
     guests = Column(Integer)
 
     def __repr__(self):
         return f"<Booking(name={self.name}, date={self.date}, guests={self.guests})>"
-
-

@@ -8,7 +8,6 @@ from datetime import datetime
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram_dialog.setup import DialogRegistry
-from src.bot.handlers import register_handlers
 from src.config import TELEGRAM_BOT_TOKEN
 
 logging.basicConfig(level=logging.INFO)
@@ -22,9 +21,10 @@ registry = DialogRegistry(dp)
 
 # Запуск процесса поллинга новых апдейтов
 async def main():
-    await dp.start_polling(bot, mylist=[1, 2, 3])
+    from src.bot.handlers import register_handlers
+    register_handlers(dp)
+    await dp.start_polling(bot, skip_updates=True)
 
 
 if __name__ == '__main__':
-    register_handlers(dp)
     asyncio.run(main())
