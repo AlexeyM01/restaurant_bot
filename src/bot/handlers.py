@@ -1,16 +1,16 @@
 """
- src/bot/handlers.py
- """
-from aiogram import Dispatcher
-from aiogram.filters import Command
-from .dialogs import cmd_test1, cmd_test2, cmd_dice, cmd_start, cmd_add_to_list, cmd_show_list, cmd_info
+src/bot/handlers.py
+"""
+from aiogram import Dispatcher, F
+from aiogram.filters import Command, Filter
+from aiogram_calendar import SimpleCalendarCallback
+
+from .dialogs import cmd_start, process_name, process_date, process_time, process_guests
 
 
 def register_handlers(dp: Dispatcher):
     dp.message.register(cmd_start, Command("start"))
-    dp.message.register(cmd_test1, Command("test1"))
-    dp.message.register(cmd_test2, Command("test2"))
-    dp.message.register(cmd_dice, Command("dice"))
-    dp.message.register(cmd_add_to_list, Command("add_to_list"))
-    dp.message.register(cmd_show_list, Command("show_list"))
-    dp.message.register(cmd_info, Command("info"))
+    dp.message.register(process_guests, F.text.regexp(r"^[1-9]$").as_("guests_number"))
+    dp.message.register(process_time, F.text.regexp(r"^([0-1][0-9]|2[0-3]):(00|30)$").as_("time_HHMM"))
+    dp.message.register(process_name, F.text.regexp(r"^([А-Я]?[а-я]+)(\s([А-Я]?[а-я]+)?(-[А-Я]?[а-я]+)?)?$"))
+    dp.callback_query.register(process_date, SimpleCalendarCallback.filter())

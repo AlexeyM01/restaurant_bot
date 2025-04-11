@@ -1,40 +1,101 @@
 """
 src/bot/dialogs.py
 """
-from aiogram import types
-from aiogram.enums.dice_emoji import DiceEmoji
-from datetime import datetime
+from datetime import datetime, timedelta
+from aiogram.types import Message, CallbackQuery, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from aiogram_calendar import SimpleCalendarCallback, SimpleCalendar, get_user_locale
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.context import FSMContext
+from dateutil.relativedelta import relativedelta
+
 from src.database.database import get_db
 from src.database.models import Booking
 
 
-async def cmd_start(message: types.Message):
-    await message.answer("Hello!")
+class BookingForm(StatesGroup):
+    name = State()
+    date = State()
+    time = State()
+    guests = State()
 
 
-async def cmd_test1(message: types.Message):
-    await message.reply("Test 1")
+time_buttons = [
+    [KeyboardButton(text="09:00"), KeyboardButton(text="10:00"), KeyboardButton(text="11:00")],
+    [KeyboardButton(text="12:00"), KeyboardButton(text="13:00"), KeyboardButton(text="14:00")],
+    [KeyboardButton(text="15:00"), KeyboardButton(text="16:00"), KeyboardButton(text="17:00")],
+    [KeyboardButton(text="18:00"), KeyboardButton(text="19:00"), KeyboardButton(text="20:00")]
+]
+time_keyboard = ReplyKeyboardMarkup(
+    keyboard=time_buttons,
+    resize_keyboard=True
+)
 
 
-async def cmd_test2(message: types.Message):
-    await message.reply("Test 2")
+async def cmd_start(message: Message, state: FSMContext):
+    await message.reply("Привет! Пожалуйста, введи свое имя:")
+    await state.set_state(BookingForm.name.state)
 
 
-async def cmd_dice(message: types.Message):
-    await message.answer_dice(emoji=DiceEmoji.DICE)
+async def process_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text)
+
+    calendar = SimpleCalendar(
+        locale=await get_user_locale(message.from_user), show_alerts=True
+    )
+    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today()+relativedelta(months=3))
+
+    await message.reply(
+        "Отлично! Теперь выбери дату:",
+        reply_markup=await calendar.start_calendar(year=datetime.now().year, month=datetime.now().month)
+    )
+    await state.set_state(BookingForm.date.state)
 
 
-async def cmd_add_to_list(message: types.Message, mylist: list[int]):
-    mylist.append(7)
-    await message.answer("Добавлено число 7")
+async def process_date(callback_query: CallbackQuery, callback_data: SimpleCalendarCallback, state: FSMContext):
+    calendar = SimpleCalendar(
+        locale=await get_user_locale(callback_query.from_user), show_alerts=True
+    )
+    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today()+relativedelta(months=3))
+    selected, date = await calendar.process_selection(callback_query, callback_data)
+    if selected:
+        selected_date = f"{callback_data.day:02}.{callback_data.month:02}.{callback_data.year:4}"
+        await callback_query.message.reply(
+            f"Вы выбрали дату: {selected_date}. Пожалуйста, выбери время:", reply_markup=time_keyboard)
+        await state.update_data(date=string_to_datetime(selected_date, "%d.%m.%Y"))
+        await state.set_state(BookingForm.time.state)
 
 
-async def cmd_show_list(message: types.Message, mylist: list[int]):
-    await message.answer(f"Ваш список: {mylist}")
+async def process_time(message: Message, state: FSMContext):
+    time = message.text
+    data = await state.get_data()
+
+    strdatetime = str(data["date"].strftime("%d.%m.%Y")) + " " + time
+    datetime = string_to_datetime(strdatetime, "%d.%m.%Y %H:%M")
+    await state.update_data(date=datetime)
+
+    await message.reply("Отлично! Пожалуйста, введи количество гостей:", reply_markup=ReplyKeyboardRemove())
+    await state.set_state(BookingForm.guests.state)
 
 
-async def cmd_info(message: types.Message, started_at: str):
-    await message.answer(f"Бот запущен {started_at}")
+async def process_guests(message: Message, state: FSMContext):
+    guests_count = int(message.text)
+    await state.update_data(guests=guests_count)
+    data = await state.get_data()
+    name, date = data['name'], data['date']
+
+    await message.reply(
+        f"Спасибо! Вы забронировали на имя {name} на {date}, {date.strftime('%A')} на {guests_count} человек")
+    await state.clear()
+
+    await db_add_booking(data['name'], data['date'], guests_count)
+
+
+def string_to_datetime(date_string, date_format):
+    try:
+        return datetime.strptime(date_string, date_format)
+    except ValueError as e:
+        print(f"Ошибка преобразования: {e}")
+        return None
 
 
 async def db_add_booking(name: str, date: datetime, guests: int):

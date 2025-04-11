@@ -8,7 +8,6 @@ from src.database.database import Base
 class Booking(Base):
     __tablename__ = 'bookings'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    telegram_user_id = Column(Integer)
     name = Column(String)
     date = Column(DateTime)
     guests = Column(Integer)
