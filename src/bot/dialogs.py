@@ -14,6 +14,7 @@ from src.database.models import Booking
 
 
 class BookingForm(StatesGroup):
+    delete = State()
     edit = State()
     name = State()
     date = State()
@@ -182,3 +183,30 @@ async def db_update_booking(name: str, date: datetime, guests: int, telegram_use
         await db.commit()
         await db.refresh(booking)
 
+
+async def cmd_delete(message: Message, state: FSMContext):
+    await message.reply("Для удаления бронирования введите слово \"удалить\" и затем ID бронирования, которое хотите "
+                        "удалить:")
+    await state.set_state(BookingForm.delete.state)
+
+
+async def process_delete(message: Message, state: FSMContext):
+    booking_id = int(message.text.split()[1])
+    telegram_user_id = message.from_user.id
+
+    async for db in get_db():
+        booking_query = select(Booking).where(Booking.id == booking_id)
+        result = await db.execute(booking_query)
+        booking = result.scalar_one_or_none()
+
+        if booking:
+            if booking.telegram_user_id == telegram_user_id:
+                await db.delete(booking)
+                await db.commit()
+                await message.reply("Бронирование успешно удалено.")
+                await state.clear()
+            else:
+                await message.reply(
+                    "Вы не можете удалить это бронирование, так как оно принадлежит другому пользователя.")
+        else:
+            await message.reply("Бронирование с таким ID не найдено. Попробуйте снова.")
