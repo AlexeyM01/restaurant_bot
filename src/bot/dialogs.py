@@ -82,12 +82,13 @@ async def process_guests(message: Message, state: FSMContext):
     await state.update_data(guests=guests_count)
     data = await state.get_data()
     name, date = data['name'], data['date']
+    telegram_user_id = message.from_user.id
 
     await message.reply(
         f"Спасибо! Вы забронировали на имя {name} на {date}, {date.strftime('%A')} на {guests_count} человек")
     await state.clear()
 
-    await db_add_booking(data['name'], data['date'], guests_count)
+    await db_add_booking(data['name'], data['date'], guests_count, telegram_user_id)
 
 
 def string_to_datetime(date_string, date_format):
@@ -98,8 +99,8 @@ def string_to_datetime(date_string, date_format):
         return None
 
 
-async def db_add_booking(name: str, date: datetime, guests: int):
-    new_booking = Booking(name=name, date=date, guests=guests)
+async def db_add_booking(name: str, date: datetime, guests: int, telegram_user_id: int):
+    new_booking = Booking(name=name, date=date, guests=guests, telegram_user_id = telegram_user_id)
     async for db in get_db():
         db.add(new_booking)
         await db.commit()
