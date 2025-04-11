@@ -14,6 +14,7 @@ from src.database.models import Booking
 
 
 class BookingForm(StatesGroup):
+    edit = State()
     name = State()
     date = State()
     time = State()
@@ -32,19 +33,58 @@ time_keyboard = ReplyKeyboardMarkup(
 )
 
 
-async def cmd_get(message: Message):
+async def get_bookings(message: Message):
     telegram_user_id = message.from_user.id
     async for db in get_db():
         booking_query = select(Booking).where(Booking.telegram_user_id == telegram_user_id)
         result = await db.execute(booking_query)
         bookings = result.scalars().all()
+
         if bookings:
             booking_messages = "\n".join(
-                [f"Бронирование: на имя: {booking.name}, дата: {booking.date}, "
-                 f"гостей = {booking.guests}" for booking in bookings])
-            await message.reply(booking_messages)
+                [f"Бронирование {booking.id}: на имя: {booking.name}, дата: {booking.date}, "
+                 f"гостей = {booking.guests}" for booking in bookings]
+            )
+            return booking_messages
+        return None
+
+
+async def cmd_get(message: Message):
+    booking_messages = await get_bookings(message=message)
+    if booking_messages is None:
+        await message.reply("У вас нет активных бронирований")
+    else:
+        await message.reply(booking_messages)
+
+
+async def cmd_egit(message: Message, state: FSMContext):
+    booking_messages = get_bookings(message=message)
+    if booking_messages is None:
+        await message.reply("У вас нет активных бронирований.")
+    else:
+        await message.reply(f"Ваши бронирования:\n{booking_messages}\n\nКакое бронирование вы хотите редактировать? "
+                            "Введите ID бронирования.")
+        await state.set_state(BookingForm.edit.state)
+
+
+async def process_edit(message: Message, state: FSMContext):
+    booking_id = int(message.text.split()[1])  # Извлекаем ID бронирования из сообщения
+    telegram_user_id = message.from_user.id
+    async for db in get_db():
+        booking_query = select(Booking).where(Booking.id == booking_id)
+        result = await db.execute(booking_query)
+        booking = result.scalar_one_or_none()
+
+        if booking:
+            if booking.telegram_user_id == telegram_user_id:
+                await state.update_data(id=booking_id)
+                await message.reply("Привет! Пожалуйста, введи свое имя:")
+                await state.set_state(BookingForm.name.state)
+            else:
+                await message.reply("Вы не можете редактировать это бронирование, так как оно принадлежит другому "
+                                    "пользователю.")
         else:
-            await message.reply("У вас нет активных бронирований.")
+            await message.reply("Бронирование с таким ID не найдено. Попробуйте снова.")
 
 
 async def cmd_start(message: Message, state: FSMContext):
@@ -58,7 +98,7 @@ async def process_name(message: Message, state: FSMContext):
     calendar = SimpleCalendar(
         locale=await get_user_locale(message.from_user), show_alerts=True
     )
-    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today()+relativedelta(months=3))
+    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today() + relativedelta(months=3))
 
     await message.reply(
         "Отлично! Теперь выбери дату:",
@@ -71,7 +111,7 @@ async def process_date(callback_query: CallbackQuery, callback_data: SimpleCalen
     calendar = SimpleCalendar(
         locale=await get_user_locale(callback_query.from_user), show_alerts=True
     )
-    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today()+relativedelta(months=3))
+    calendar.set_dates_range(datetime.today() - timedelta(days=1), datetime.today() + relativedelta(months=3))
     selected, date = await calendar.process_selection(callback_query, callback_data)
     if selected:
         selected_date = f"{callback_data.day:02}.{callback_data.month:02}.{callback_data.year:4}"
@@ -102,9 +142,14 @@ async def process_guests(message: Message, state: FSMContext):
 
     await message.reply(
         f"Спасибо! Вы забронировали на имя {name} на {date}, {date.strftime('%A')} на {guests_count} человек")
-    await state.clear()
+    data = await state.get_data()
 
-    await db_add_booking(data['name'], data['date'], guests_count, telegram_user_id)
+    if data.get("id"):
+        id = data["id"]
+        await db_update_booking(name, date, guests_count, telegram_user_id, id)
+    else:
+        await db_add_booking(name, date, guests_count, telegram_user_id)
+    await state.clear()
 
 
 def string_to_datetime(date_string, date_format):
@@ -116,10 +161,24 @@ def string_to_datetime(date_string, date_format):
 
 
 async def db_add_booking(name: str, date: datetime, guests: int, telegram_user_id: int):
-    new_booking = Booking(name=name, date=date, guests=guests, telegram_user_id = telegram_user_id)
+    new_booking = Booking(name=name, date=date, guests=guests, telegram_user_id=telegram_user_id)
     async for db in get_db():
         db.add(new_booking)
         await db.commit()
         await db.refresh(new_booking)
 
+
+async def db_update_booking(name: str, date: datetime, guests: int, telegram_user_id: int, id: int):
+    async for db in get_db():
+        booking_query = select(Booking).where(Booking.id == id)
+        result = await db.execute(booking_query)
+
+        booking = result.scalar_one_or_none()
+        booking.name = name
+        booking.date = date
+        booking.guests = guests
+        booking.telegram_user_id = telegram_user_id
+
+        await db.commit()
+        await db.refresh(booking)
 
