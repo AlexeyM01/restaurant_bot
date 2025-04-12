@@ -17,23 +17,24 @@ SessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=F
 
 
 async def init_db():
-    """
-    Инициализирует базу данных, создавая все таблицы в базе данных
-    """
+    """Инициализирует базу данных, создавая все таблицы в базе данных"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def get_db() -> AsyncSession:
+    """Возвращает сессию базы данных"""
     async with SessionLocal() as session:
         yield session
 
 
 async def create_test_database():
+    """Создает тестовую базу данных"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 
 async def drop_test_database():
+    """Удаляет тестовую базу данных"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

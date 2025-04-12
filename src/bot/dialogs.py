@@ -13,6 +13,10 @@ from src.database.database import get_db
 from src.database.models import Booking
 
 
+class BookingNotFoundError(Exception):
+    pass
+
+
 class BookingForm(StatesGroup):
     delete = State()
     edit = State()
@@ -69,7 +73,12 @@ async def cmd_egit(message: Message, state: FSMContext):
 
 
 async def process_edit(message: Message, state: FSMContext):
-    booking_id = int(message.text.split()[1])  # Извлекаем ID бронирования из сообщения
+    try:
+        booking_id = int(message.text.split()[1])  # Извлекаем ID бронирования из сообщения
+    except (IndexError, ValueError):
+        await message.reply("Пожалуйста, укажите корректный ID бронирования.")
+        return
+
     telegram_user_id = message.from_user.id
     async for db in get_db():
         booking_query = select(Booking).where(Booking.id == booking_id)
@@ -99,7 +108,7 @@ async def process_name(message: Message, state: FSMContext):
     calendar = SimpleCalendar(
         locale=await get_user_locale(message.from_user), show_alerts=True
     )
-    calendar.set_dates_range(datetime.today()-timedelta(days=1), datetime.today() + relativedelta(months=3))
+    calendar.set_dates_range(datetime.today() - timedelta(days=1), datetime.today() + relativedelta(months=3))
 
     await message.reply(
         "Отлично! Теперь выбери дату:",
@@ -137,20 +146,27 @@ async def process_time(message: Message, state: FSMContext):
 async def process_guests(message: Message, state: FSMContext):
     guests_count = int(message.text)
     await state.update_data(guests=guests_count)
-    data = await state.get_data()
-    name, date = data['name'], data['date']
-    telegram_user_id = message.from_user.id
 
-    await message.reply(
-        f"Спасибо! Вы забронировали на имя {name} на {date}, {date.strftime('%A')} на {guests_count} человек")
-    data = await state.get_data()
+    booking_data = await state.get_data()
+    booking = create_booking_model(
+        name=booking_data['name'],
+        date=booking_data['date'],
+        guests_count=guests_count,
+        telegram_user_id=message.from_user.id,
+        booking_id=booking_data.get("id")
+    )
+    await save_booking(booking)
+    await send_confirmation_message(message, booking)
 
-    if data.get("id"):
-        id = data["id"]
-        await db_update_booking(name, date, guests_count, telegram_user_id, id)
-    else:
-        await db_add_booking(name, date, guests_count, telegram_user_id)
     await state.clear()
+
+
+async def send_confirmation_message(message: Message, booking: Booking):
+    confirmation_text = (
+        f"Спасибо! Вы забронировали на имя {booking.name} на {booking.date}, "
+        f"{booking.date.strftime('%A')} на {booking.guests} человек"
+    )
+    await message.reply(confirmation_text)
 
 
 def string_to_datetime(date_string, date_format):
@@ -161,33 +177,54 @@ def string_to_datetime(date_string, date_format):
         return None
 
 
-async def db_add_booking(name: str, date: datetime, guests: int, telegram_user_id: int):
-    new_booking = Booking(name=name, date=date, guests=guests, telegram_user_id=telegram_user_id)
+def create_booking_model(name: str, date: str, guests_count: int, telegram_user_id: int, booking_id=None) -> Booking:
+    return Booking(
+        name=name,
+        date=date,
+        guests=guests_count,
+        telegram_user_id=telegram_user_id,
+        id=booking_id
+    )
+
+
+async def save_booking(booking: Booking):
+    if booking.id:
+        await db_update_booking(booking)  # Обновление бронирования
+    else:
+        await db_add_booking(booking)  # Создание бронирования
+
+
+async def db_add_booking(booking: Booking):
     async for db in get_db():
-        db.add(new_booking)
-        await db.commit()
-        await db.refresh(new_booking)
-
-
-async def db_update_booking(name: str, date: datetime, guests: int, telegram_user_id: int, id: int):
-    async for db in get_db():
-        booking_query = select(Booking).where(Booking.id == id)
-        result = await db.execute(booking_query)
-
-        booking = result.scalar_one_or_none()
-        booking.name = name
-        booking.date = date
-        booking.guests = guests
-        booking.telegram_user_id = telegram_user_id
-
+        db.add(booking)
         await db.commit()
         await db.refresh(booking)
+
+
+async def db_update_booking(booking: Booking):
+    async for db in get_db():
+        existing_booking = await db.get(Booking, booking.id)
+        if not existing_booking:
+            raise BookingNotFoundError("Бронирования не найдено")
+
+        # Обновляем поля существующего бронирования
+        existing_booking.telegram_user_id = booking.telegram_user_id
+        existing_booking.name = booking.name
+        existing_booking.date = booking.date
+        existing_booking.guests = booking.guests
+
+        await db.commit()
+        await db.refresh(existing_booking)
 
 
 async def cmd_delete(message: Message, state: FSMContext):
     await message.reply("Для удаления бронирования введите слово \"удалить\" и затем ID бронирования, которое хотите "
                         "удалить:")
     await state.set_state(BookingForm.delete.state)
+
+
+async def user_can_modify_booking(booking: Booking, telegram_user_id: int) -> bool:
+    return booking.telegram_user_id == telegram_user_id
 
 
 async def process_delete(message: Message, state: FSMContext):
@@ -200,7 +237,7 @@ async def process_delete(message: Message, state: FSMContext):
         booking = result.scalar_one_or_none()
 
         if booking:
-            if booking.telegram_user_id == telegram_user_id:
+            if user_can_modify_booking(booking, telegram_user_id):
                 await db.delete(booking)
                 await db.commit()
                 await message.reply("Бронирование успешно удалено.")
